@@ -19,6 +19,16 @@ import charmhelpers.contrib.openstack.amulet.utils as os_amulet_utils
 # Use DEBUG to turn on debug logging
 u = os_amulet_utils.OpenStackAmuletUtils(os_amulet_utils.DEBUG)
 
+ldap_config_flags = "\
+{user_id_attribute: uid,\
+user_name_attribute: uid,\
+user_tree_dn: 'ou=users,dc=test,dc=com',\
+user_objectclass: inetOrgPerson,\
+group_tree_dn: 'ou=groups,dc=test,dc=com',\
+group_id_attribute: cn,\
+group_name_attribute: cn,\
+group_member_attribute: memberUid,\
+group_objectclass: posixGroup}"
 
 class KeystoneLDAPCharmDeployment(amulet_deployment.OpenStackAmuletDeployment):
     """Amulet tests on a basic sdn_charm deployment."""
@@ -52,7 +62,7 @@ class KeystoneLDAPCharmDeployment(amulet_deployment.OpenStackAmuletDeployment):
             {'name': 'keystone'},
             {'name': 'percona-cluster'},
             {'name': 'ldap-server',
-             'location': 'cs:~openstack-charmers/ldap-test-fixture'},
+             'location': '/home/ubuntu/charms/bionic/ldap-test-fixture'},
         ]
         super(KeystoneLDAPCharmDeployment, self)._add_services(
             this_service,
@@ -88,12 +98,17 @@ class KeystoneLDAPCharmDeployment(amulet_deployment.OpenStackAmuletDeployment):
         self.ldap_server_sentry = self.d.sentry['ldap-server'][0]
         self.ldap_server_ip = self.ldap_server_sentry.info['public-address']
 
+        #group_objectclass = groupOfNames
+        #group_id_attribute = gidnumber
+        #group_members_are_ids = False
+        #user_tree_dn = ou=users,dc=test,dc=com
         keystone_ldap_config = {
             'ldap-server': "ldap://{}".format(self.ldap_server_ip),
             'ldap-user': 'cn=admin,dc=test,dc=com',
             'ldap-password': 'crapper',
             'ldap-suffix': 'dc=test,dc=com',
             'domain-name': 'userdomain',
+            'ldap-config-flags': ldap_config_flags
         }
         if all(keystone_ldap_config.values()):
             self.ldap_configured = True
@@ -143,6 +158,21 @@ class KeystoneLDAPCharmDeployment(amulet_deployment.OpenStackAmuletDeployment):
                     "".format(username, usernames))
         return None
 
+    def find_keystone_v3_group(self, client, groupname, domain, user=None):
+        """Find a group within a specified keystone v3 domain"""
+        domain_groups = client.groups.list(
+            domain=client.domains.find(name=domain).id,
+            user=user
+        )
+        groupnames = []
+        for group in domain_groups:
+            groupsnames.append(group.name)
+            if groupname.lower() == group.name.lower():
+                return group
+        u.log.debug("The group {} was not in these groups: {}. Returning None."
+                    "".format(groupname, groupnames))
+        return None
+
     def test_100_keystone_ldap_users(self):
         """Validate basic functionality of keystone API"""
         if not self.ldap_configured:
@@ -153,8 +183,34 @@ class KeystoneLDAPCharmDeployment(amulet_deployment.OpenStackAmuletDeployment):
         # NOTE(jamespage): Test fixture should have johndoe and janedoe
         #                  accounts
         johndoe = self.find_keystone_v3_user(self.keystone,
-                                             'john doe', 'userdomain')
+                                             'johndoe', 'userdomain')
+        print("CCB johndoe={}".format(johndoe))
         assert johndoe is not None
         janedoe = self.find_keystone_v3_user(self.keystone,
-                                             'jane doe', 'userdomain')
+                                             'janedoe', 'userdomain')
+        print("CCB janedoe={}".format(janedoe))
         assert janedoe is not None
+        janedoe = self.find_keystone_v3_user(self.keystone,
+                                             'johndoe', 'userdomain',
+                                             group='admin')
+        print("CCB johndoe={}".format(johndoe))
+        assert johndoe is not None
+
+    def test_101_keystone_ldap_groups(self):
+        """Validate basic functionality of keystone API"""
+        if not self.ldap_configured:
+            msg = 'Skipping API tests as no LDAP test fixture'
+            u.log.info(msg)
+            return
+
+        # NOTE(jamespage): Test fixture should have johndoe and janedoe
+        #                  accounts
+        admin = self.find_keystone_v3_group(self.keystone,
+                                             'admin', 'userdomain')
+        print("CCB admin={}".format(admin))
+        assert admin is not None
+        admin = self.find_keystone_v3_group(self.keystone,
+                                            'admin', 'userdomain',
+                                            user='johndoe')
+        print("CCB admin={}".format(admin))
+        assert admin is not None
